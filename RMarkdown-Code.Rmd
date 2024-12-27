@@ -1,0 +1,315 @@
+---
+title: "Fitbit Data Analysis - Women"
+author: "Sithara Sreeramachandra"
+date: "2024-12-18"
+output: html_document
+---
+
+Bellabeat[Fitbit] sells smart wearables and wellness accessories designed specifically for women, such as fitness trackers, menstrual cups, yoga mats, and hydration aids. The objective of the website is to promote holistic health by offering products and personalized wellness programs that help women monitor and improve their physical and mental well-being in harmony with their lifestyle and needs
+
+
+Here, we are analyzing data from fitbit to understand sleep, activity, intensity of workouts, weights and calories of women.  
+
+
+#1. Loading packages
+```{r load_pkg}
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(lubridate)
+library(randomForest)
+```
+
+#2. Loading data
+```{r load_data}
+activity <- read.csv("C:/Users/sitha/Documents/Self Projects/R/BellaBeat CaseStudy/Fitbit Data_Kaggle/dailyActivity_merged.csv")
+calories <- read.csv("C:/Users/sitha/Documents/Self Projects/R/BellaBeat CaseStudy/Fitbit Data_Kaggle/hourlyCalories_merged.csv")
+intensities <- read.csv("C:/Users/sitha/Documents/Self Projects/R/BellaBeat CaseStudy/Fitbit Data_Kaggle/hourlyIntensities_merged.csv")
+sleep <- read.csv("C:/Users/sitha/Documents/Self Projects/R/BellaBeat CaseStudy/Fitbit Data_Kaggle/sleepDay_merged.csv")
+weights <- read.csv("C:/Users/sitha/Documents/Self Projects/R/BellaBeat CaseStudy/Fitbit Data_Kaggle/weightLogInfo_merged.csv")
+
+```
+
+#3.1 Summary - pt1
+```{r}
+head(activity)
+head(calories)
+head(intensities)
+head(sleep)
+head(weights)
+```
+#3.2 Summary - pt2
+```{r}
+nrow(activity)
+nrow(calories)
+nrow(intensities)
+nrow(sleep)
+nrow(weights)
+```
+#3.1 Summary - of only "Activity" dataset
+```{r}
+summary(activity)
+```
+#4. Data Cleansing - using lubridate library. Here we are fomatting "time" related columns in tables - activity, intensities, calories, weights, sleep
+```{r}
+#intensities - Here we are first converting character field to time datatype , then we break it to time and date
+intensities$ActivityHour = as.POSIXct(intensities$ActivityHour,
+                                      format = "%m/%d/%Y %I:%M:%S %p",
+                                      tz= Sys.timezone())
+intensities$time <- format(intensities$ActivityHour, format = "%H:%M:%S" )
+intensities$date <- format(intensities$ActivityHour, format = "%m/%d/%y")
+
+#calories - similar to intensities
+calories$ActivityHour = as.POSIXct(calories$ActivityHour,
+                                   format= "%m/%d/%Y %I:%M:%S %p",
+                                   tz = Sys.timezone()) 
+calories$time <- format(calories$ActivityHour, format = "%H:%M:%S")
+calories$date <- format(calories$ActivityHour, format = "%m/%d/%y")
+
+#sleep - similar to intensities and calories, but we want only date and not time  
+sleep$SleepDay = as.POSIXct(sleep$SleepDay,
+                            format ="%m/%d/%Y %I:%M:%S %p",
+                            tz=Sys.timezone())
+sleep$date <- format(sleep$SleepDay, format = "%m/%d/%y")
+
+#activity - has only date, so we will convert character to date 
+
+activity$ActivityDate <- as.character(activity$ActivityDate)
+activity$ActivityDate <- trimws(activity$ActivityDate)
+#-----#
+
+activity$ActivityDate=as.POSIXct(activity$ActivityDate, 
+                                 format="%m/%d/%Y", 
+                                 tz=Sys.timezone())
+activity$date <- format(activity$ActivityDate, format = "%m/%d/%y")
+
+#weights - similar to calories, intensities - format both date and time 
+weights$Date = as.POSIXct(weights$Date,
+                          format ="%m/%d/%Y %I:%M:%S %p",
+                          tz= Sys.timezone())
+weights$dates <- format(weights$Date, format = "%m/%d/%y")
+
+```
+
+#4. Viewing the changes again
+```{r}
+head(activity)
+head(calories)
+head(intensities)
+head(sleep)
+head(weights)
+```
+#5. Checking distinct IDs in all the tables 
+```{r}
+n_distinct(activity$Id)
+n_distinct(calories$Id)
+n_distinct(intensities$Id)
+n_distinct(weights$Id)
+n_distinct(sleep$Id)
+```
+Here we have 35 Unique IDs in activity, 34 Unique IDs in Calories & Intensities, Sleep table contains 24 unique IDs, and the least of the unique IDs are in weights table.
+Each unique ID = 1 Participant in the fitness 
+
+
+#6. Summary statistics of datasets 
+```{r}
+#activity summary 
+
+activity %>% select(TotalSteps,TotalDistance,SedentaryMinutes, Calories) %>% summary()
+activity %>% select(VeryActiveMinutes, FairlyActiveMinutes, LightlyActiveMinutes) %>% summary()
+
+#sleep 
+sleep %>% select(TotalSleepRecords, TotalMinutesAsleep, TotalTimeInBed) %>% summary()
+
+#weight 
+weights %>% select(WeightKg, BMI) %>% summary()
+
+```
+Inferences made - 
+1. Sedentary Minutes(Excessive laziness) 1440 minutes = 24 hours of idleness which is too high and has to be reduced. 
+2. Max weight is 129kg , the person is obese and need to cut down weight, if not other diseases will start popping up. Similarly for BMI, BMI of 26 itself is very high for a person, while from the data we see Max BMI of 46 also causes obesity. 
+3. Majority people sleep around 450 mins = 7.5 hours, that is a very healthy sleep. 
+4. Minutes of Activity tells us that minimum of very active, fairly active and lightly active is all 0. 
+5. Average total steps per day are 6547 which a little bit less for having health benefits for according to the CDC research. They found that taking 8,000 steps per day was associated with a 51% lower risk for all-cause mortality (or death from all causes). Taking 12,000 steps per day was associated with a 65% lower risk compared with taking 4,000 steps.
+
+#7. Exploratory Data Analysis
+#7.1 Merging data - ACtivity & Sleep
+```{r}
+activity_sleep <- merge(sleep, activity, by=c('Id','date'))
+head(activity_sleep)
+```
+#7.2 Visualizations
+#7.2.1 - to check relationship between calories & Total steps
+```{r}
+cal_step <- ggplot(data = activity, aes(x = TotalSteps, y = Calories)) +
+  geom_point() + 
+  geom_smooth() + 
+  labs(title = "Total Steps Vs Calories")  
+print(cal_step)
+
+
+```
+Inference - I see positive correlation here between Total Steps and Calories, which is obvious - the more active we are, the more calories we burn. I also see a few outliers like - very few steps taken, yet burnt 2000+ calories 
+
+#7.2.2 to check if sleeping is correlated to time in bed(logged sleep)
+```{r}
+ sleep_log <- ggplot(data = sleep, aes(x=TotalMinutesAsleep, y=TotalTimeInBed)) + geom_point() + labs(title = "Total Sleep Vs Total time in Bed")
+
+print(sleep_log)
+
+```
+The relationship between Total Minutes Asleep and Total Time in Bed looks linear. 
+So if the users want to improve their sleep, we should consider using notification to go to sleep.
+
+
+#7.2.3 Analysing Intensities 
+
+```{r}
+int_new <- intensities %>% 
+            group_by(time) %>%
+            drop_na() %>%
+            summarise(mean_int = mean(TotalIntensity))
+
+# head(int_new)
+graph_int <- ggplot(data = int_new, aes(x=time, y=mean_int)) + geom_histogram(stat = "identity", fill = 'darkgrey') + theme(axis.text.x = element_text(angle = 90)) + labs(title = "Average Total Intensity Vs Time")
+print(graph_int)
+```
+
+
+
+#7.2.4 Calories Vs Time for a particular Id
+```{r}
+calo_id <- calories %>%
+        filter (Id == "2026352035") %>%
+        group_by(date) %>%
+        drop_na() %>% 
+        summarise(total_calories = sum(Calories))
+
+# head(calo_id)
+# nrow(calo_id)      
+
+calo_plot <- ggplot(data=calo_id, aes(x=date,y=total_calories)) + geom_bar(stat = "identity", fill = 'lightblue') + theme(axis.text.x = element_text(angle = 90)) + labs(title = "Total Calories over Time for 2026352035")
+print(calo_plot)
+
+```
+#8. Predictive Analytics 
+--> Build a model (e.g., Random Forest) to predict future weight based on historical activity, calorie expenditure, and current weight.
+Merging Activity & Weight Data Frames as we have necessary data on a day to day basis 
+```{r}
+activity_weight <- merge(weights,activity,by = "Id", all.x = TRUE)
+head(activity_weight)
+summary(subset(activity_weight, Id == "1503960366"))
+weights%>%distinct(Id)%>%arrange(Id)
+activity_weight%>%distinct(Id)%>%arrange(Id)
+
+```
+#8.1 Seperating data - data_before is for training & data_after is for testing 
+```{r}
+#1. Renaming column - "dates" to "WeightDate" and date to Adate meaning Activity Date 
+names(activity_weight)[names(activity_weight) == "dates"] <- "WDate"
+names(activity_weight)[names(activity_weight) == "date"] <- "ADate"
+# head(activity_weight)
+
+data_before <- activity_weight %>% filter(WDate>ADate)
+head(data_before)
+
+data_after <- activity_weight %>% filter(WDate<=ADate)
+head(data_after)
+
+```
+#8.2 Data Validation 
+```{r}
+db_check <- data_before %>% group_by(Id,WDate) %>% summarise(max_ADate = max(ADate))
+print(db_check)
+
+da_check <- data_after %>% group_by(Id, WDate) %>% summarise(min_ADate = min(ADate),max_ADate = max(ADate))
+print(da_check)
+```
+#8.3 Training the model using target variable and feature variables
+```{r}
+#defining features and target variables 
+target <- "WeightKg"
+features <- c("TotalSteps", "TotalDistance", "VeryActiveMinutes", "SedentaryMinutes", "BMI", "Calories" )
+
+#splitting training data into training_features & training_target
+training_features <- data_before[, features]
+# head(training_features)
+training_target <- data_before[, target] 
+# print(training_target)
+```
+
+#8.4 Training Random Forest Model
+```{r}
+model <- randomForest(formula = WeightKg ~ TotalSteps + TotalDistance + VeryActiveMinutes + SedentaryMinutes + Calories + BMI, data = data_before)
+
+```
+
+#8.5 Predictions 
+```{r}
+predictions <- predict(model, data_after[, features])
+head(predictions)
+
+# Add a new column named "PredictedWeightKg" to data_after
+data_after$PredictedWeightKg <- predictions
+
+head(data_after)
+```
+## Model Evaluation
+```{r}
+# Load required libraries
+library(caret)
+library(Metrics)
+
+# Check the lengths of data_after$WeightKg and data_after$PredictedWeightKg
+print(length(data_after$WeightKg))
+print(length(data_after$PredictedWeightKg))
+
+# Remove any NA values
+data_after <- data_after[complete.cases(data_after[c("WeightKg", "PredictedWeightKg")]), ]
+
+# Convert actual and predicted weights to binary classes
+actual_class <- ifelse(data_after$WeightKg < data_after$WeightKg[1], "Loss", "Gain")
+predicted_class <- ifelse(data_after$PredictedWeightKg < data_after$WeightKg[1], "Loss", "Gain")
+
+# Create factors with the same levels
+levels <- c("Loss", "Gain")
+actual_class_factor <- factor(actual_class, levels = levels)
+predicted_class_factor <- factor(predicted_class, levels = levels)
+
+# Check if both factors have the same length
+if (length(actual_class_factor) == length(predicted_class_factor)) {
+  # Create confusion matrix
+  conf_matrix <- confusionMatrix(predicted_class_factor, actual_class_factor)
+  print(conf_matrix)
+  
+  # Extract accuracy, precision, and recall
+  accuracy <- conf_matrix$overall["Accuracy"]
+  precision <- conf_matrix$byClass["Pos Pred Value"]
+  recall <- conf_matrix$byClass["Sensitivity"]
+  
+  # Calculate Mean Squared Error (MSE) and Mean Absolute Error (MAE)
+  mse <- mean((data_after$WeightKg - data_after$PredictedWeightKg)^2)
+  mae <- mean(abs(data_after$WeightKg - data_after$PredictedWeightKg))
+  
+  # Print results
+  cat("Accuracy:", accuracy, "\n")
+  cat("Precision:", precision, "\n")
+  cat("Recall:", recall, "\n")
+  cat("Mean Squared Error:", mse, "\n")
+  cat("Mean Absolute Error:", mae, "\n")
+} else {
+  cat("Error: The lengths of actual and predicted classes do not match.\n")
+  cat("Length of actual_class_factor:", length(actual_class_factor), "\n")
+  cat("Length of predicted_class_factor:", length(predicted_class_factor), "\n")
+}
+
+
+# Plot actual vs predicted weights
+ggplot(data_after, aes(x = WeightKg, y = PredictedWeightKg)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(x = "Actual Weight (kg)", y = "Predicted Weight (kg)", 
+       title = "Actual vs Predicted Weight") +
+  theme_minimal()
+```
